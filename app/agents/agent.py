@@ -94,8 +94,22 @@ def build_agent_model() -> ChatOpenAI:
     """
     Construye el modelo del agente con las tools ya vinculadas (bind_tools),
     listo para que LangGraph lo invoque en el nodo call_model.
+
+    Se pasa `api_key` explícitamente (cuando está definida) en vez de confiar
+    únicamente en que ChatOpenAI lea la variable de entorno OPENAI_API_KEY del
+    proceso: `settings.openai_api_key` viene de `.env` a través de
+    pydantic-settings, que NO exporta esa variable a `os.environ`. Sin este
+    wiring, si OPENAI_API_KEY no está además seteada como variable de entorno
+    real del sistema, el cliente de OpenAI falla al construirse aunque el
+    .env esté bien configurado. Si `settings.openai_api_key` está vacío se
+    pasa `None`, que es el default de ChatOpenAI, preservando su fallback
+    normal a la variable de entorno del sistema.
     """
-    return ChatOpenAI(model=settings.openai_model, temperature=0).bind_tools(TOOLS)
+    return ChatOpenAI(
+        model=settings.openai_model,
+        temperature=0,
+        api_key=settings.openai_api_key or None,
+    ).bind_tools(TOOLS)
 
 
 agent_model = build_agent_model()

@@ -1,30 +1,26 @@
-APP_ENV=development
-APP_NAME=SmartInventory-Chatbot
-DEBUG=True
-LOG_LEVEL=INFO
+# Entornos virtuales
+venv/
+.venv/
+.venv*/
+env/
 
-# --- Servidor ---
-HOST=0.0.0.0
-PORT=8000
+# Variables de entorno (usar .env.example como plantilla)
+.env
+.env.*
+!.env.example
 
-DOTNET_API_BASE_URL=https://localhost:5001/api
-DOTNET_API_TIMEOUT=30
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-DOTNET_SERVICE_API_KEY=tu_api_key_de_servicio_aqui
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
 
-OPENAI_API_KEY=tu_openai_api_key_aqui
-OPENAI_MODEL=gpt-4o-mini
-
-# --- Embeddings (para pgvector / búsqueda semántica de productos) ---
-EMBEDDING_MODEL=text-embedding-3-small
-
-# --- LangSmith (opcional, para trazabilidad de LangGraph/LangChain) ---
-LANGCHAIN_TRACING_V2=false
-LANGCHAIN_API_KEY=tu_langsmith_api_key_aqui
-LANGCHAIN_PROJECT=smartinventory-chatbot
-
-# --- Sesión / memoria de conversación ---
-SESSION_STORE=memory
-REDIS_URL=redis://localhost:6379/0
-
-ALLOWED_ORIGINS=https://localhost:5001
+# Logs
+*.log

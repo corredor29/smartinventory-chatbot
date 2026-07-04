@@ -1,11 +1,20 @@
+from typing import Any
+
 from langchain_core.tools import tool
 
+from app.agents.tools.common import with_tool_error_handling
 from app.clients.dotnet_client import dotnet_client
 from app.core.logging import logger
 
 
 @tool
-async def escalate_to_human(session_id: str, reason: str) -> dict:
+@with_tool_error_handling(
+    fallback={
+        "success": False,
+        "message": "Hubo un problema al conectarte con un asesor. Por favor intenta de nuevo en unos minutos.",
+    }
+)
+async def escalate_to_human(session_id: str, reason: str) -> dict[str, Any]:
     """
     Escala la conversación completa a un asesor humano cuando NO puedes resolver
     la solicitud del cliente tú mismo. Úsala cuando el cliente pida hablar con una
@@ -22,25 +31,19 @@ async def escalate_to_human(session_id: str, reason: str) -> dict:
     logger.info(f"[{session_id}] Escalando a asesor humano. Motivo: {reason}")
 
     payload = {"session_id": session_id, "reason": reason}
-
-    try:
-        result = await dotnet_client.post("/chat/escalate", json=payload)
-        return {
-            "success": True,
-            "escalation_id": result.get("escalation_id"),
-            "message": "Te estoy conectando con un asesor humano, en un momento te atiende.",
-        }
-    except Exception as e:
-        logger.error(f"[{session_id}] Error escalando conversación: {e}")
-        return {
-            "success": False,
-            "message": "Hubo un problema al conectarte con un asesor. Por favor intenta de nuevo en unos minutos.",
-            "error": str(e),
-        }
+    result = await dotnet_client.post("/chat/escalate", json=payload)
+    return {
+        "success": True,
+        "escalation_id": result.get("escalation_id"),
+        "message": "Te estoy conectando con un asesor humano, en un momento te atiende.",
+    }
 
 
 @tool
-async def notify_advisor(session_id: str, notification_type: str, details: str, sale_id: int | None = None) -> dict:
+@with_tool_error_handling(fallback={"success": False})
+async def notify_advisor(
+    session_id: str, notification_type: str, details: str, sale_id: int | None = None
+) -> dict[str, Any]:
     """
     Envía una notificación a un asesor SIN escalar ni pausar la conversación con
     el cliente (el bot sigue atendiendo normalmente). Úsala en dos casos:
@@ -68,10 +71,5 @@ async def notify_advisor(session_id: str, notification_type: str, details: str, 
         "details": details,
         "sale_id": sale_id,
     }
-
-    try:
-        await dotnet_client.post("/chat/notify-advisor", json=payload)
-        return {"success": True}
-    except Exception as e:
-        logger.error(f"[{session_id}] Error notificando al asesor: {e}")
-        return {"success": False, "error": str(e)}
+    await dotnet_client.post("/chat/notify-advisor", json=payload)
+    return {"success": True}
