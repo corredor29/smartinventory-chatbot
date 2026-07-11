@@ -12,12 +12,17 @@ from app.core.logging import logger
 @with_tool_error_handling(fallback={"found": False, "products": []})
 async def search_product(query: str) -> dict[str, Any]:
     """
-    Busca productos en el catálogo de SmartInventory por nombre o descripción.
-    Úsala cuando el cliente mencione algo que quiere comprar, por ejemplo
-    "laptop para diseño" o "teclado mecánico".
+    Busca productos en el catálogo de SmartInventory por nombre, marca, categoría
+    o descripción. Úsala SIEMPRE que el cliente mencione una marca o tipo de
+    producto, aunque sea de forma vaga (ej. "me gustan los lenovos", "quiero una
+    laptop", "tienen teclados?").
+
+    Pasa términos cortos y útiles (marca o tipo), NO la frase completa del cliente.
+    Ejemplos buenos de query: "lenovo", "laptop", "teclado mecánico".
+    Ejemplos malos: "me gustan los lenovos", "no tienes un lenovo LOQ".
 
     Args:
-        query: términos de búsqueda (nombre, categoría o descripción del producto).
+        query: palabras clave de búsqueda (marca, modelo o categoría).
     """
     logger.info(f"Buscando producto: {query}")
     return await dotnet_client.get("/products/search", params={"q": query})

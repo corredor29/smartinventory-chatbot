@@ -78,7 +78,9 @@ def get_or_create_state(session_id: str) -> ChatState:
             customer_id=None,
             state="IN_PROGRESS",
             invoice_number=None,
+            sale_origin=None,
             escalated=False,
+            found_products=None,
         )
 
     _last_activity[session_id] = time.monotonic()

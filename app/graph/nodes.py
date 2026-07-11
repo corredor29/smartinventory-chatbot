@@ -65,4 +65,57 @@ def capture_sale_result(state: ChatState) -> dict:
         return {}
 
     metrics.increment("chatbot.sales.completed")
-    return {"invoice_number": payload.get("invoice_number")}
+    return {
+        "invoice_number": payload.get("invoice_number"),
+        "sale_origin": "CHATBOT",
+        "state": "SALE_COMPLETED",
+    }
+
+
+def capture_search_result(state: ChatState) -> dict:
+    """
+    Extrae la lista de productos de search_product hacia el estado, para que
+    .NET / el front puedan mostrar tarjetas estructuradas.
+    """
+    last_message = state["messages"][-1]
+    content = last_message.content
+
+    if isinstance(content, dict):
+        payload = content
+    else:
+        try:
+            payload = json.loads(content)
+        except (TypeError, ValueError):
+            return {}
+
+    products = payload.get("products") or []
+    if not isinstance(products, list):
+        return {}
+
+    normalized = []
+    for p in products:
+        if not isinstance(p, dict):
+            continue
+        pid = p.get("productId") or p.get("product_id")
+        if pid is None:
+            continue
+        normalized.append(
+            {
+                "product_id": int(pid),
+                "name": p.get("name") or "",
+                "description": p.get("description"),
+                "price": float(p.get("price") or 0),
+                "category_name": p.get("categoryName") or p.get("category_name") or "",
+                "status_name": p.get("statusName") or p.get("status_name") or "",
+                "current_stock": int(p.get("currentStock") or p.get("current_stock") or 0),
+                "image_url": p.get("imageUrl") or p.get("image_url"),
+            }
+        )
+
+    if not normalized:
+        return {}
+
+    logger.info(
+        f"[{state['session_id']}] Capturados {len(normalized)} productos para el front"
+    )
+    return {"found_products": normalized}
