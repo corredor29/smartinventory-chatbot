@@ -20,21 +20,33 @@ def route_after_model(state: ChatState) -> str:
 def route_after_tools(state: ChatState) -> str:
     """
     Decide qué pasa después de ejecutar una tool:
-    - Si la tool que se ejecutó fue escalate_to_human -> ir al nodo que marca
-      la conversación como escalada, y terminar ahí (no seguir generando más
-      respuestas del bot, ya que un humano tomó el control).
-    - Si fue create_sale -> ir al nodo que captura el número de factura en
-      el estado antes de continuar.
-    - En cualquier otro caso -> volver al modelo para que continúe la conversación
-      con el resultado de la tool ya disponible.
+    - Si escalate_to_human tuvo éxito -> marcar escalada y terminar.
+    - Si escalate falló (ej. cliente no autenticado) -> volver al modelo
+      para que informe al cliente (login requerido).
+    - Si fue create_sale -> capturar factura.
+    - En cualquier otro caso -> volver al modelo.
     """
+    import json
+
     last_message = state["messages"][-1]
     tool_name = getattr(last_message, "name", None)
 
     if tool_name == "escalate_to_human":
-        return "mark_escalated"
+        content = last_message.content
+        payload = content if isinstance(content, dict) else None
+        if payload is None:
+            try:
+                payload = json.loads(content) if isinstance(content, str) else {}
+            except (TypeError, ValueError):
+                payload = {}
+        if payload.get("success"):
+            return "mark_escalated"
+        return "call_model"
 
     if tool_name == "create_sale":
         return "capture_sale_result"
+
+    if tool_name == "search_product":
+        return "capture_search_result"
 
     return "call_model"

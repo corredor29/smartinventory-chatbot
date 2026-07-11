@@ -42,6 +42,7 @@ async def _process_message(request: ChatRequest) -> ChatResponse:
     async with session_lock(request.session_id):
         # 1. Recuperar (o crear) el estado de esta conversación
         state = get_or_create_state(request.session_id)
+        state["found_products"] = None
         state["messages"].append(HumanMessage(content=request.message))
 
         # 2. Ejecutar el grafo con el estado actualizado, con un timeout para
@@ -57,6 +58,10 @@ async def _process_message(request: ChatRequest) -> ChatResponse:
                 status_code=504,
                 detail="El chatbot tardó demasiado en responder. Intenta de nuevo.",
             )
+        except RuntimeError as exc:
+            # Tipicamente OPENAI_API_KEY ausente (agente lazy)
+            logger.error(f"Configuración del chatbot incompleta: {exc}")
+            raise HTTPException(status_code=503, detail=str(exc))
         except Exception:
             logger.exception("Error ejecutando el grafo")
             raise HTTPException(
@@ -78,8 +83,15 @@ async def _process_message(request: ChatRequest) -> ChatResponse:
         if result_state.get("escalated"):
             clear_session(request.session_id)
 
+        invoice_number = result_state.get("invoice_number")
+        sale_origin = result_state.get("sale_origin")
+        if invoice_number and not sale_origin:
+            sale_origin = "CHATBOT"
+
         return ChatResponse(
             response=response_text,
             state=result_state.get("state", "IN_PROGRESS"),
-            invoice_number=result_state.get("invoice_number"),
+            invoice_number=invoice_number,
+            sale_origin=sale_origin,
+            products=result_state.get("found_products") or [],
         )

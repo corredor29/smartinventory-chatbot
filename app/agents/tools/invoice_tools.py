@@ -21,11 +21,11 @@ async def get_invoice(invoice_number: str) -> dict[str, Any]:
         invoice_number: número de factura a consultar, en formato FAC-XXXXXX.
     """
     logger.info(f"Consultando factura: {invoice_number}")
-    result = await dotnet_client.get(f"/invoices/{invoice_number}")
+    result = await dotnet_client.get(f"/invoices/number/{invoice_number}")
     return {
         "found": True,
-        "invoice_number": result.get("invoice_number"),
-        "issue_date": result.get("issue_date"),
+        "invoice_number": result.get("invoiceNumber") or result.get("invoice_number"),
+        "issue_date": result.get("issueDate") or result.get("issue_date"),
         "total": result.get("total"),
         "items": result.get("items", []),
     }
