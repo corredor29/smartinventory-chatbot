@@ -36,18 +36,26 @@ async def create_sale(
         f"[{session_id}] Registrando venta: producto={product_id}, cantidad={quantity}"
     )
 
+    # camelCase para el binder de ASP.NET Core
     payload = {
-        "session_id": session_id,
-        "customer_id": customer_id,
-        "items": [{"product_id": product_id, "quantity": quantity}],
+        "sessionId": session_id,
+        "customerId": customer_id,
+        "items": [{"productId": product_id, "quantity": quantity}],
         "origin": "Chatbot",
     }
 
     result = await dotnet_client.post("/sales", json=payload)
+    if result.get("success") is False:
+        return {
+            "success": False,
+            "message": result.get("message")
+            or "No se pudo registrar la venta.",
+        }
+
     return {
         "success": True,
-        "sale_id": result.get("sale_id"),
-        "invoice_number": result.get("invoice_number"),
+        "sale_id": result.get("saleId") or result.get("sale_id"),
+        "invoice_number": result.get("invoiceNumber") or result.get("invoice_number"),
         "total": result.get("total"),
-        "message": "Venta registrada exitosamente.",
+        "message": result.get("message") or "Venta registrada exitosamente.",
     }

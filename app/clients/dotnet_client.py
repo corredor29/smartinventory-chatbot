@@ -97,7 +97,20 @@ class DotnetClient:
                 if response.status_code < 400:
                     if not response.content:
                         return {}
-                    return response.json()
+                    payload = response.json()
+                    # SmartInventoryAPI envuelve respuestas 2xx en { success, data }
+                    if (
+                        isinstance(payload, dict)
+                        and "data" in payload
+                        and "success" in payload
+                    ):
+                        data = payload.get("data")
+                        if isinstance(data, dict):
+                            return data
+                        if data is None:
+                            return {}
+                        return {"value": data}
+                    return payload if isinstance(payload, dict) else {"value": payload}
 
                 if response.status_code < 500:
                     # Error de negocio (400/404/etc.): nunca se reintenta.

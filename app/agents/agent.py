@@ -25,9 +25,11 @@ usando siempre datos reales del sistema (nunca información inventada).
 
 ## Flujo que debes seguir
 
-1. **Buscar el producto**: cuando el cliente mencione algo que quiere comprar (ej. "una
-   laptop para diseño", "un teclado mecánico"), usa search_product con los términos
-   relevantes. No asumas un producto específico sin haberlo buscado.
+1. **Buscar el producto**: cuando el cliente mencione una marca, modelo o tipo
+   de producto — aunque sea vago ("me gustan los lenovos", "quiero una laptop",
+   "tienen teclados?") — SIEMPRE usa search_product ANTES de decir que no hay.
+   Pasa keywords cortas (ej. "lenovo", "laptop"), no la frase completa del cliente.
+   Nunca digas que no hay stock o que no existe un producto sin haber buscado.
 
 2. **Manejar los resultados de la búsqueda**:
    - Si no se encuentra nada, dile al cliente claramente que no tienes ese producto
@@ -69,14 +71,32 @@ usando siempre datos reales del sistema (nunca información inventada).
 8. **Consultar facturas**: si el cliente pregunta por una compra anterior con su
    número de factura, usa get_invoice para darle el detalle real.
 
-## Cuándo escalar TODA la conversación a un asesor humano (escalate_to_human)
-Usa esta tool, sin intentar resolverlo tú mismo, cuando el cliente:
+9. **Compras con formularios del front**: el cliente también puede usar el botón
+   "Comprar producto" del chat, que muestra tarjetas para elegir producto y
+   llenar nombre, teléfono, documento y método de pago. Si el cliente dice que
+   quiere comprar, puedes invitarlo a usar ese botón o continuar por texto.
+   Cuando vendas por tools, sigue pidiendo confirmación explícita antes de create_sale.
+
+## Cuándo ofrecer / escalar a un asesor humano
+Si NO puedes resolver la consulta (búsqueda sin resultados útiles, pregunta fuera
+de ventas, no tienes datos, o el cliente insiste), NO inventes una respuesta.
+En su lugar:
+1. Explica brevemente que no puedes resolverlo tú.
+2. Pregunta: "¿Quieres que te conecte con un asesor humano?"
+3. Solo si el cliente acepta ("sí", "dale", "quiero un asesor", etc.) o si pide
+   explícitamente hablar con una persona, usa escalate_to_human.
+
+También escala de una vez (sin preguntar otra vez) cuando el cliente:
 - Pida explícitamente hablar con una persona o un humano.
 - Pregunte por garantías, devoluciones, reclamos o problemas con una compra anterior.
-- Haga una pregunta fuera del alcance de ventas (soporte técnico detallado, temas de
-  facturación empresarial, negociación de precios fuera de lista).
 - Exprese frustración o insatisfacción evidente con las respuestas del bot.
-No sigas intentando responder por tu cuenta en estos casos: escala de una vez.
+- Repita la misma pregunta porque tus respuestas no le sirvieron.
+
+Si escalate_to_human falla con requires_login=true, entonces (y SOLO entonces)
+dile que debe iniciar sesión. Nunca inventes por tu cuenta que el cliente no
+está autenticado: tú no sabes si tiene sesión en el front. Si el cliente ya
+parece estar comprando o conversando con normalidad, NO digas que debe iniciar
+sesión: vuelve a intentar escalate_to_human o pide que pulse "Contactar soporte humano".
 
 Nota la diferencia: escalate_to_human pausa la conversación y la pasa a un humano.
 notify_advisor NO pausa nada — tú sigues atendiendo, solo avisas en paralelo.
@@ -95,6 +115,9 @@ def build_agent_model() -> ChatOpenAI:
     Construye el modelo del agente con las tools ya vinculadas (bind_tools),
     listo para que LangGraph lo invoque en el nodo call_model.
 
+    Lazy: no se llama al importar el módulo; usar get_agent_model() /
+    agent_model (proxy) para construir bajo demanda.
+
     Se pasa `api_key` explícitamente (cuando está definida) en vez de confiar
     únicamente en que ChatOpenAI lea la variable de entorno OPENAI_API_KEY del
     proceso: `settings.openai_api_key` viene de `.env` a través de
@@ -112,4 +135,29 @@ def build_agent_model() -> ChatOpenAI:
     ).bind_tools(TOOLS)
 
 
-agent_model = build_agent_model()
+_agent_model = None
+
+
+def get_agent_model():
+    """Return the bound agent model, building it on first use."""
+    global _agent_model
+    if _agent_model is None:
+        if not settings.openai_api_key:
+            raise RuntimeError(
+                "openai_api_key is empty; set OPENAI_API_KEY in the environment or .env"
+            )
+        _agent_model = build_agent_model()
+    return _agent_model
+
+
+class _AgentModelProxy:
+    """Proxy so existing `agent_model.invoke(...)` call sites stay valid."""
+
+    def invoke(self, *args, **kwargs):
+        return get_agent_model().invoke(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(get_agent_model(), name)
+
+
+agent_model = _AgentModelProxy()
