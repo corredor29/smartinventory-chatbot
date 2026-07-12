@@ -1,11 +1,11 @@
-from typing import Annotated, Any
+from typing import Annotated, Any # Tipos utilizados para mejorar el tipado de las funciones.
 
-from langchain_core.tools import tool
-from pydantic import Field
+from langchain_core.tools import tool # Decorador que convierte una función en una Tool de LangChain.
+from pydantic import Field # Field permite validar automáticamente los parámetros recibidos por la Tool.
 
-from app.agents.tools.common import with_tool_error_handling
-from app.clients.dotnet_client import dotnet_client
-from app.core.logging import logger
+from app.agents.tools.common import with_tool_error_handling # Decorador encargado de manejar errores, registrar logs # y actualizar métricas.
+from app.clients.dotnet_client import dotnet_client  # Cliente HTTP utilizado para comunicarse con la API .NET.
+from app.core.logging import logger # Logger del proyecto.
 
 
 @tool
@@ -43,10 +43,15 @@ async def check_stock(
         quantity: cantidad que el cliente quiere comprar (máximo 100 por venta).
     """
     logger.info(f"Validando stock: producto={product_id}, cantidad={quantity}")
+    
+    """
+    Consulta la API .NET para conocer el inventario
+    actual del producto.
+    """
     result = await dotnet_client.get(f"/inventory/{product_id}/stock")
-    current_stock = result.get("current_stock", 0)
+    current_stock = result.get("current_stock", 0) # Obtiene el inventario actual.
     return {
-        "available": current_stock >= quantity,
-        "current_stock": current_stock,
-        "requested_quantity": quantity,
+        "available": current_stock >= quantity, # Indica si existe inventario suficiente.
+        "current_stock": current_stock,  #Cantidad existente.
+        "requested_quantity": quantity, # Cantidad solicitada.
     }
