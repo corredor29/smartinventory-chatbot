@@ -1,11 +1,11 @@
-from typing import Annotated, Any
+from typing import Annotated, Any # Tipos utilizados para mejorar el tipado de la Tool.
 
-from langchain_core.tools import tool
-from pydantic import Field
+from langchain_core.tools import tool # Decorador que convierte una función en una Tool de LangChain.
+from pydantic import Field # Permite validar automáticamente los parámetros recibidos por la Tool.
 
-from app.agents.tools.common import with_tool_error_handling
-from app.clients.dotnet_client import dotnet_client
-from app.core.logging import logger
+from app.agents.tools.common import with_tool_error_handling # Decorador encargado de registrar métricas, logs y manejar errores comunes.
+from app.clients.dotnet_client import dotnet_client # Cliente HTTP utilizado para comunicarse con la API .NET.
+from app.core.logging import logger # Logger del proyecto.
 
 
 @tool
@@ -35,15 +35,36 @@ async def create_sale(
     logger.info(
         f"[{session_id}] Registrando venta: producto={product_id}, cantidad={quantity}"
     )
+    
+    """
+    Construye el cuerpo de la petición HTTP que será
+    enviado a la API .NET.
+
+    Se utilizan nombres en formato camelCase porque el
+    binder de ASP.NET Core los espera con esa convención.
+
+    Estructura enviada:
+
+        {
+            sessionId,
+            customerId,
+            items,
+            origin
+        }
+    """
 
     # camelCase para el binder de ASP.NET Core
     payload = {
-        "sessionId": session_id,
-        "customerId": customer_id,
-        "items": [{"productId": product_id, "quantity": quantity}],
-        "origin": "Chatbot",
+        "sessionId": session_id, # Identificador de la conversación.
+        "customerId": customer_id, # Cliente asociado.
+        "items": [{"productId": product_id, "quantity": quantity}], # Productos vendidos.
+        "origin": "Chatbot", # Origen de la venta.
     }
-
+    
+    """
+    Envía una petición HTTP POST al endpoint encargado de
+    registrar ventas.
+    """
     result = await dotnet_client.post("/sales", json=payload)
     if result.get("success") is False:
         return {
@@ -53,9 +74,9 @@ async def create_sale(
         }
 
     return {
-        "success": True,
-        "sale_id": result.get("saleId") or result.get("sale_id"),
-        "invoice_number": result.get("invoiceNumber") or result.get("invoice_number"),
-        "total": result.get("total"),
-        "message": result.get("message") or "Venta registrada exitosamente.",
+        "success": True, # Venta creada correctamente.
+        "sale_id": result.get("saleId") or result.get("sale_id"), # Identificador interno.
+        "invoice_number": result.get("invoiceNumber") or result.get("invoice_number"), # Número de factura generado.
+        "total": result.get("total"), # Valor total de la compra.
+        "message": result.get("message") or "Venta registrada exitosamente.", # Mensaje de respuesta.
     }

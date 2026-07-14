@@ -25,9 +25,9 @@ from app.graph.state import ChatState
 # despliegue (requiere un Redis corriendo) y no es necesario para el
 # alcance actual del proyecto.
 
-_sessions: dict[str, ChatState] = {}
-_last_activity: dict[str, float] = {}
-_locks: dict[str, asyncio.Lock] = {}
+_sessions: dict[str, ChatState] = {} # Diccionario que mapea session_id a ChatState. Contiene todas las sesiones activas en memoria.
+_last_activity: dict[str, float] = {} # Diccionario que mapea session_id a la marca de tiempo (time.monotonic()) de la última actividad. Se utiliza para determinar si una sesión ha expirado por inactividad.
+_locks: dict[str, asyncio.Lock] = {} # Diccionario que mapea session_id a un asyncio.Lock. Se utiliza para serializar el acceso a la sesión y evitar condiciones de carrera cuando múltiples requests concurrentes intentan modificar el mismo estado de sesión.
 
 
 def session_lock(session_id: str) -> asyncio.Lock:
@@ -50,10 +50,10 @@ def session_lock(session_id: str) -> asyncio.Lock:
 
 
 def _is_expired(session_id: str) -> bool:
-    last_seen = _last_activity.get(session_id)
+    last_seen = _last_activity.get(session_id) #Obtiene la marca de tiempo de la última actividad para la sesión dada. Si no existe, significa que la sesión nunca ha sido activa o ya fue eliminada.
     if last_seen is None:
         return False
-    return (time.monotonic() - last_seen) > settings.session_ttl_seconds
+    return (time.monotonic() - last_seen) > settings.session_ttl_seconds #Compara la marca de tiempo actual con la última actividad para determinar si la sesión ha expirado según el TTL configurado.
 
 
 def get_or_create_state(session_id: str) -> ChatState:
@@ -62,29 +62,29 @@ def get_or_create_state(session_id: str) -> ChatState:
     valores por defecto si es la primera vez que se ve ese session_id (o si
     la sesión anterior expiró por inactividad).
     """
-    if session_id in _sessions and _is_expired(session_id):
-        logger.info(f"[{session_id}] Sesión expirada por inactividad, se reinicia")
-        clear_session(session_id)
+    if session_id in _sessions and _is_expired(session_id): #Si la sesión existe pero ha expirado, se elimina y se crea una nueva.
+        logger.info(f"[{session_id}] Sesión expirada por inactividad, se reinicia") # Registra la expiración de la sesión.
+        clear_session(session_id) # Elimina la sesión expirada de los diccionarios de sesiones, última actividad y locks.
 
     if session_id not in _sessions:
-        logger.info(f"[{session_id}] Nueva sesión de chat iniciada")
+        logger.info(f"[{session_id}] Nueva sesión de chat iniciada") # Registra la creación de una nueva sesión de chat.
         _sessions[session_id] = ChatState(
-            session_id=session_id,
-            messages=[],
-            pending_product_id=None,
-            pending_product_name=None,
-            pending_quantity=None,
-            pending_unit_price=None,
-            customer_id=None,
-            state="IN_PROGRESS",
-            invoice_number=None,
-            sale_origin=None,
-            escalated=False,
-            found_products=None,
+            session_id=session_id, # Identificador único de la sesión.
+            messages=[], # Lista de mensajes intercambiados en la sesión.
+            pending_product_id=None, # Identificador del producto pendiente de confirmación (si aplica).
+            pending_product_name=None, # Nombre del producto pendiente de confirmación (si aplica).
+            pending_quantity=None, # Cantidad pendiente de confirmación (si aplica).
+            pending_unit_price=None, # Precio unitario pendiente de confirmación (si aplica).
+            customer_id=None, # Identificador del cliente asociado a la sesión (si aplica).
+            state="IN_PROGRESS", # Estado actual de la conversación (IN_PROGRESS, COMPLETED, ESCALATED, etc.).
+            invoice_number=None, # Número de factura asociado a la venta (si aplica).
+            sale_origin=None, # Origen de la venta (si aplica).
+            escalated=False, # Indica si la sesión ha sido escalada a un asesor humano.
+            found_products=None, # Lista de productos encontrados en la búsqueda (si aplica).
         )
 
-    _last_activity[session_id] = time.monotonic()
-    return _sessions[session_id]
+    _last_activity[session_id] = time.monotonic() # Actualiza la marca de tiempo de la última actividad para la sesión actual.
+    return _sessions[session_id] # Devuelve el estado de la sesión (ya sea existente o recién creada) para que pueda ser utilizado por la lógica del chatbot.
 
 
 def save_state(session_id: str, state: ChatState) -> None:
@@ -109,14 +109,14 @@ def clear_session(session_id: str) -> None:
     Elimina una sesión por completo (ej. cuando se cierra, expira, o se
     escala a un asesor y el bot ya no debe seguir participando).
     """
-    _sessions.pop(session_id, None)
+    _sessions.pop(session_id, None) 
     _last_activity.pop(session_id, None)
     _locks.pop(session_id, None)
     logger.info(f"[{session_id}] Sesión eliminada de memoria")
 
 
 def get_active_session_count() -> int:
-    return len(_sessions)
+    return len(_sessions) #Devuelve el número de sesiones activas actualmente en memoria. Esto puede ser útil para monitoreo o métricas del sistema.
 
 
 def purge_expired_sessions() -> int:

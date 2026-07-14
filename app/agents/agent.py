@@ -1,20 +1,55 @@
+# Cliente de LangChain para interactuar con modelos de OpenAI.
+#
+# Esta clase representa el modelo de lenguaje que utilizará
+# el chatbot para comprender preguntas, razonar y decidir
+# cuándo utilizar herramientas externas.
 from langchain_openai import ChatOpenAI
 
+# Configuración global de la aplicación.
+#
+# Desde aquí se obtiene:
+#
+# • Modelo de OpenAI.
+# • API Key.
+# • Parámetros generales del chatbot.
 from app.core.config import settings
-from app.agents.tools.product_tools import search_product, check_stock
-from app.agents.tools.sale_tools import create_sale
-from app.agents.tools.escalation_tools import escalate_to_human, notify_advisor
-from app.agents.tools.invoice_tools import get_invoice
+from app.agents.tools.product_tools import search_product, check_stock # Herramientas relacionadas con productos.
+from app.agents.tools.sale_tools import create_sale # Herramienta para registrar ventas.
+from app.agents.tools.escalation_tools import escalate_to_human, notify_advisor # Herramientas relacionadas con atención humana.
+from app.agents.tools.invoice_tools import get_invoice # Herramienta para consultar facturas.
 
 # Tools que el agente puede decidir invocar
 TOOLS = [
-    search_product,
-    check_stock,
-    create_sale,
-    escalate_to_human,
-    notify_advisor,
-    get_invoice,
+    search_product, # Buscar productos en el catálogo.
+    check_stock, # Consultar disponibilidad de inventario.
+    create_sale, # Registrar ventas.
+    escalate_to_human, # Escalar conversación a un asesor humano.
+    notify_advisor, # Notificar a un asesor sin detener la conversación.
+    get_invoice, # Consultar información de facturas.
 ]
+
+"""El System Prompt define el comportamiento general del
+modelo de Inteligencia Artificial.
+
+Puede considerarse como el conjunto de instrucciones
+permanentes que el agente seguirá durante toda la
+conversación.
+
+Mientras el usuario únicamente envía mensajes, el System
+Prompt establece:
+
+    • Qué puede hacer el asistente.
+
+    • Qué no debe hacer.
+
+    • Cuándo utilizar cada Tool.
+
+    • Cómo responder.
+
+    • Qué reglas de negocio respetar.
+
+Estas instrucciones permanecen ocultas para el usuario y
+se envían automáticamente al modelo en cada ejecución."""
 
 SYSTEM_PROMPT = """Eres el asistente de ventas de SmartInventory, una tienda de tecnología
 especializada en laptops, periféricos, componentes y accesorios.
@@ -129,25 +164,42 @@ def build_agent_model() -> ChatOpenAI:
     normal a la variable de entorno del sistema.
     """
     return ChatOpenAI(
-        model=settings.openai_model,
-        temperature=0,
-        api_key=settings.openai_api_key or None,
+        model=settings.openai_model, # Modelo configurado en config.py
+        temperature=0, # Temperatura cero para respuestas determinísticas.
+        api_key=settings.openai_api_key or None, # API Key utilizada para autenticarse con OpenAI.
     ).bind_tools(TOOLS)
 
+"""
+Variable privada utilizada para almacenar la única
+instancia del modelo durante toda la ejecución del
+servidor.
 
+Inicialmente su valor es:
+
+    None
+
+La primera vez que se solicite el modelo será creada una
+instancia mediante build_agent_model().
+
+Las siguientes solicitudes reutilizarán exactamente la
+misma instancia.
+
+Este comportamiento evita crear un nuevo cliente de OpenAI
+para cada petición recibida.
+"""
 _agent_model = None
 
 
 def get_agent_model():
     """Return the bound agent model, building it on first use."""
     global _agent_model
-    if _agent_model is None:
-        if not settings.openai_api_key:
+    if _agent_model is None:  # Si el modelo aún no existe se crea.
+        if not settings.openai_api_key: # Verifica que exista una API Key válida.
             raise RuntimeError(
                 "openai_api_key is empty; set OPENAI_API_KEY in the environment or .env"
             )
-        _agent_model = build_agent_model()
-    return _agent_model
+        _agent_model = build_agent_model() # Construye el modelo.
+    return _agent_model # Devuelve la instancia existente.
 
 
 class _AgentModelProxy:
@@ -159,5 +211,20 @@ class _AgentModelProxy:
     def __getattr__(self, name):
         return getattr(get_agent_model(), name)
 
+"""
+Instancia pública utilizada por todo el proyecto.
 
+Los demás módulos nunca crean directamente un ChatOpenAI.
+
+Siempre utilizan:
+
+    agent_model
+
+Ejemplo:
+
+    response = await agent_model.ainvoke(messages)
+
+El Proxy garantiza que el modelo exista antes de intentar
+utilizarlo.
+"""
 agent_model = _AgentModelProxy()

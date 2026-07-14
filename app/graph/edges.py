@@ -1,6 +1,6 @@
-from langgraph.graph import END
+from langgraph.graph import END # Constante utilizada por LangGraph para indicar que el flujo de ejecución debe finalizar.
 
-from app.graph.state import ChatState
+from app.graph.state import ChatState # Estado compartido de la conversación.
 
 
 def route_after_model(state: ChatState) -> str:
@@ -13,7 +13,7 @@ def route_after_model(state: ChatState) -> str:
 
     if getattr(last_message, "tool_calls", None):
         return "tools"
-
+    
     return END
 
 
