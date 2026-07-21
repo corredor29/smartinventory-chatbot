@@ -1,0 +1,767 @@
+{
+  "name": "SmartInventory Chatbot",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## SmartInventory Chatbot v7\n\nv7: Agent **siempre** + enrich determinista + notify garantizado\n\n- Prefetch solo inyecta [CONTEXTO SISTEMA]\n- Estados desde intermediateSteps\n- Pending en staticData.sessions\n- HTTP Notify si el Agent omitió notify_advisor\n\n**Entrada:** POST /webhook/chat-message\n**Salida:** response, state, invoice_number,\nsale_origin, products\n\n**Setup:**\n1. Credencial OpenAI en OpenAI Chat Model\n2. API .NET en :5299\n3. Activar (desactiva workflows viejos)",
+        "height": 460,
+        "width": 400,
+        "color": 5
+      },
+      "id": "note-1",
+      "name": "Notas",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat-message",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        320
+      ],
+      "webhookId": "smartinventory-chat-message"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "session_id",
+              "value": "={{ $json.body.session_id || $json.session_id || 'anon' }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "message",
+              "value": "={{ $json.body.message || $json.message || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-1",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = String($json.message || '').trim();\nconst lower = msg.toLowerCase();\nconst stop = new Set([\n  'quiero','quisiera','gustaria','gustaría','busco','necesito',\n  'un','una','unos','unas','el','la','los','las','de','del','para','por',\n  'me','mi','con','y','o','que','como','hola','buenas','buen','dia','tarde','noche',\n  'comprar','compra','producto','productos','favor','porfavor','algo',\n  'tiene','tienen','hay','confirmo','dale','si','sí','ok','okay','claro'\n]);\nconst tokens = lower\n  .normalize('NFD')\n  .replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-z0-9\\s]/g, ' ')\n  .split(/\\s+/)\n  .filter(Boolean);\nconst keep = (t) =>\n  !stop.has(t) &&\n  (t.length >= 3 || /^\\d+$/.test(t) || /^[a-z]*\\d+[a-z\\d]*$/i.test(t));\nlet keywords = tokens.filter(keep);\nconst brand = lower.match(\n  /lenovo|asus|acer|dell|hp|msi|apple|samsung|logitech|razer|corsair|kingston|laptop|teclado|mouse|monitor|ram|ssd|audifonos|audifonos/\n);\nif (brand) {\n  const b = brand[0].normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n  if (!keywords.includes(b)) keywords.unshift(b);\n}\nkeywords = [...new Set(keywords)];\nconst query = keywords.slice(0, 5).join(' ');\nreturn [{ json: { ...$json, search_query: query, should_search: query.length > 0 } }];"
+      },
+      "id": "code-extract",
+      "name": "Extract Search Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-bool",
+              "leftValue": "={{ $json.should_search }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-should-search",
+      "name": "IF should_search",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://localhost:5299/api/products/search?q={{ encodeURIComponent($json.search_query || '') }}&raw=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "http-search",
+      "name": "HTTP Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { products: [], found: false } }];"
+      },
+      "id": "code-empty-search",
+      "name": "Empty Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Normalize Input').first().json;\nconst extract = $('Extract Search Query').first().json;\nlet search = {};\ntry { search = $('HTTP Search').first().json || {}; } catch (e) {\n  try { search = $('Empty Search Results').first().json || {}; } catch (e2) { search = {}; }\n}\n\nfunction mapProduct(p) {\n  if (!p || typeof p !== 'object') return null;\n  const id = Number(p.product_id ?? p.productId ?? p.ProductId ?? 0);\n  if (!id) return null;\n  return {\n    product_id: id,\n    name: String(p.name ?? p.Name ?? ''),\n    description: p.description ?? p.Description ?? null,\n    price: Number(p.price ?? p.Price ?? 0),\n    category_name: String(p.category_name ?? p.categoryName ?? p.CategoryName ?? ''),\n    status_name: String(p.status_name ?? p.statusName ?? p.StatusName ?? ''),\n    current_stock: Number(p.current_stock ?? p.currentStock ?? p.CurrentStock ?? 0),\n    image_url: p.image_url ?? p.imageUrl ?? p.ImageUrl ?? null\n  };\n}\n\nconst raw = search.products || (search.data && search.data.products) || [];\nlet products = Array.isArray(raw) ? raw.map(mapProduct).filter(Boolean) : [];\nconst q = String(extract.search_query || '');\nconst _tokens = q.trim().toLowerCase().split(/\\s+/).filter(t => t.length >= 1);\nif (_tokens.length) {\n  const _strict = products.filter(p => {\n    const name = String(p.name || '').toLowerCase();\n    return _tokens.every(t => name.includes(t));\n  });\n  if (_strict.length) products = _strict;\n}\nconst shouldSearch = !!extract.should_search;\nlet message = String(input.message || '');\nconst lowerMsg = message.toLowerCase();\nconst sessionId = String(input.session_id || 'anon');\n\nconst is_confirm = /\\b(si|sí|dale|ok|okay|confirmo|claro|yes)\\b/i.test(lowerMsg.trim())\n  && lowerMsg.trim().split(/\\s+/).length <= 4;\nconst is_escalate = /asesor|humano|persona|soporte humano|reclamo|garantia|garantía/i.test(lowerMsg);\nconst has_invoice = /FAC-\\d+/i.test(message) || /\\bfactura\\b/i.test(lowerMsg);\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.sessions) staticData.sessions = {};\nconst pending = staticData.sessions[sessionId]?.pending || null;\n\nif (products.length > 0 && shouldSearch) {\n  message += '\\n\\n[CONTEXTO SISTEMA - búsqueda previa OK para \"' + q + '\"]\\n'\n    + JSON.stringify({ found: true, products })\n    + '\\nSi el contexto trae products, NO llames search_product de nuevo. '\n    + 'Incluye products en el JSON final. '\n    + 'NUNCA digas que hubo un problema al buscar.';\n} else if (shouldSearch) {\n  message += '\\n\\n[CONTEXTO SISTEMA - búsqueda previa de \"' + q\n    + '\" sin resultados]. Puedes reintentar search_product con otra keyword corta.';\n}\n\nif (pending && is_confirm) {\n  message += '\\n\\n[CONFIRMACION PENDIENTE]\\n'\n    + 'product_id=' + pending.product_id\n    + ', quantity=' + (pending.quantity || 1)\n    + ', name=' + JSON.stringify(pending.name || '')\n    + '\\nEl usuario CONFIRMÓ. Llama create_sale YA con esos ids, luego notify_advisor(shipping_verification).';\n} else if (pending && !is_confirm && !is_escalate && !has_invoice) {\n  message += '\\n\\n[PRODUCTO PENDIENTE]\\n'\n    + 'Hay un producto pendiente de confirmación: '\n    + JSON.stringify(pending.name || '')\n    + ' (id=' + pending.product_id + ', qty=' + (pending.quantity || 1) + '). '\n    + 'Recuérdale al cliente o espera confirmación (sí/confirmo).';\n}\n\nreturn [{\n  json: {\n    session_id: sessionId,\n    message,\n    search_query: q,\n    should_search: shouldSearch,\n    prefetched_products: products,\n    pending,\n    is_confirm,\n    is_escalate,\n    has_invoice\n  }\n}];"
+      },
+      "id": "code-prepare",
+      "name": "Prepare Agent Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.message }}",
+        "options": {
+          "systemMessage": "=Eres Killjoy, la asistente de ventas de SmartInventory (tienda de tecnología:\nlaptops, periféricos, componentes y accesorios). Tono breve, claro y amable;\nprecios como \"$X.XXX.XXX COP\". Sin lenguaje robótico.\n\n## Objetivo\nAyudar a encontrar, cotizar y comprar con datos REALES vía tools.\nNUNCA inventes productos, precios ni stock.\n\nsession_id: {{ $('Normalize Input').item.json.session_id }}\n\n## Contexto prefetched\nEl sistema puede enviarte un bloque [CONTEXTO SISTEMA] con resultados de búsqueda\nya obtenidos. Si ese bloque trae products:\n- Usa esos datos (nombre, precio, stock, product_id).\n- Inclúyelos en el campo products del JSON final.\n- NUNCA digas \"hubo un problema al buscar\" si hay products.\n- NUNCA escales solo por haber buscado.\n- Prefiere NO volver a llamar search_product si el contexto ya trae products\n  (solo reintenta si products está vacío).\nSi no hay contexto o products vacío, usa la tool search_product.\n\n## Confirmación pendiente\nSi el mensaje incluye [CONFIRMACION PENDIENTE] con product_id y quantity:\n- DEBES llamar create_sale YA con esos ids.\n- Luego llama notify_advisor(shipping_verification) con saleId si existe.\nNo pidas confirmación otra vez: el usuario ya confirmó (sí/confirmo).\n\n## Flujo obligatorio (igual al bot Python)\n1) Buscar: marca/modelo/tipo -> search_product con keywords cortas (ej. \"lenovo\").\n2) Resultados: rellena products en el JSON final. La UI muestra TARJETAS (cards).\n   - response CORTO: 1-2 oraciones máx (ej. \"Encontré X opciones de Lenovo. Elige en las tarjetas o dime cuál te interesa.\").\n   - NUNCA pongas imágenes markdown ![ ](url), NUNCA pegues URLs de imagen, NUNCA dumps de catálogos largos en response.\n   - Los datos completos van SOLO en products[].\n3) Stock: antes de prometer venta -> check_stock(product_id, quantity).\n   Compara available/current_stock vs cantidad pedida; si no alcanza, dilo y no vendas.\n4) Confirmar: resumen producto/stock/total COP y pide confirmación.\n5) Vender: SOLO tras sí/confirmo/dale -> create_sale.\n6) Tras venta OK: SIEMPRE notify_advisor(shipping_verification) con saleId.\n7) Si create_sale falla: notify_advisor(sale_problem) e informa.\n8) Facturas FAC-... -> get_invoice.\n9) Escalar SOLO si piden humano/reclamos/garantías/frustración.\n   Si requires_login, pide iniciar sesión. No inventes auth.\n\nNota: escalate_to_human pausa. notify_advisor NO pausa.\nWAITING_HUMAN_AGENT SOLO si escalate_to_human fue exitoso.\n\n## Formato de salida (CRÍTICO)\nAl FINAL responde SOLO un JSON válido (sin markdown, sin texto fuera):\n{\n  \"response\": \"texto amable para el cliente\",\n  \"state\": \"IN_PROGRESS\",\n  \"invoice_number\": null,\n  \"sale_origin\": null,\n  \"products\": []\n}\n\nstate: IN_PROGRESS | SALE_COMPLETED | WAITING_HUMAN_AGENT | ERROR\nSALE_COMPLETED: invoice_number del create_sale, sale_origin=\"CHATBOT\"\nproducts: product_id, name, description, price, category_name, status_name,\ncurrent_stock, image_url (desde search). Si no buscaste, [].\nLa UI renderiza cards con imagen desde products[]; response solo introduce en 1-2 oraciones.\nNUNCA pongas markdown de imágenes ni URLs ni catálogos largos en response.\n",
+          "maxIterations": 12,
+          "returnIntermediateSteps": true
+        }
+      },
+      "id": "agent-1",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        1540,
+        320
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "llm-1",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1400,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Normalize Input').item.json.session_id }}",
+        "contextWindowLength": 16
+      },
+      "id": "mem-1",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        1600,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Busca productos en SmartInventory. Keywords cortas (ej. lenovo, laptop). Respuesta: {found, products[]} con productId, name, price, currentStock, imageUrl, categoryName. Si found=true, lista productos; NO digas error.",
+        "method": "GET",
+        "url": "http://localhost:5299/api/products/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $fromAI('query', 'Palabras clave cortas. Ej: lenovo, laptop', 'string') }}"
+            },
+            {
+              "name": "raw",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-search",
+      "name": "search_product",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1180,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Consulta stock actual por product_id. Parámetro quantity (fromAI): cantidad pedida por el cliente (aunque no va en la URL). La respuesta trae available/current_stock; tú comparas available vs quantity pedida y decides si alcanza. Antes de vender, verifica que stock >= quantity.",
+        "method": "GET",
+        "url": "=http://localhost:5299/api/inventory/{{ $fromAI('product_id', 'ID numérico del producto', 'number') }}/stock?raw=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-stock",
+      "name": "check_stock",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1380,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Registra venta. SOLO tras confirmación (sí/confirmo/dale). origin siempre Chatbot. Devuelve invoiceNumber y saleId.",
+        "method": "POST",
+        "url": "http://localhost:5299/api/sales?raw=1",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sessionId\": \"{{ $('Normalize Input').item.json.session_id }}\",\n  \"items\": [{ \"productId\": {{ $fromAI('product_id', 'ID del producto a vender', 'number') }}, \"quantity\": {{ $fromAI('quantity', 'Cantidad confirmada (1-100)', 'number') }} }],\n  \"origin\": \"Chatbot\"\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-sale",
+      "name": "create_sale",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1580,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Consulta factura por número FAC-XXXXXX.",
+        "method": "GET",
+        "url": "=http://localhost:5299/api/invoices/number/{{ $fromAI('invoice_number', 'Número de factura FAC-XXXXXX', 'string') }}?raw=1",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-invoice",
+      "name": "get_invoice",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1780,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Escala a asesor humano (pausa el bot). SOLO si piden humano, reclamos, garantías o frustración. NO usar por búsquedas de productos. Si requires_login, pide iniciar sesión.",
+        "method": "POST",
+        "url": "http://localhost:5299/api/chat/escalate?raw=1",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sessionId\": \"{{ $('Normalize Input').item.json.session_id }}\",\n  \"reason\": {{ JSON.stringify($fromAI('reason', 'Motivo breve del escalamiento', 'string')) }}\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-escalate",
+      "name": "escalate_to_human",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "toolDescription": "Notifica asesor SIN pausar. notification_type: shipping_verification (venta ok) o sale_problem (create_sale falló). Incluye saleId (número) si la venta existe; si no, null.",
+        "method": "POST",
+        "url": "http://localhost:5299/api/chat/notify-advisor?raw=1",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sessionId\": \"{{ $('Normalize Input').item.json.session_id }}\",\n  \"notificationType\": {{ JSON.stringify($fromAI('notification_type', 'shipping_verification o sale_problem', 'string')) }},\n  \"details\": {{ JSON.stringify($fromAI('details', 'Detalle para el asesor', 'string')) }},\n  \"saleId\": {{ $fromAI('sale_id', 'ID venta si existe o null', 'number') }}\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "tool-notify",
+      "name": "notify_advisor",
+      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
+      "typeVersion": 1.1,
+      "position": [
+        2180,
+        820
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const agent = $json;\nconst prep = $('Prepare Agent Context').first().json;\nconst sessionId = String(prep.session_id || $('Normalize Input').first().json.session_id || 'anon');\n\nfunction mapProduct(p) {\n  if (!p || typeof p !== 'object') return null;\n  const id = Number(p.product_id ?? p.productId ?? p.ProductId ?? 0);\n  if (!id) return null;\n  return {\n    product_id: id,\n    name: String(p.name ?? p.Name ?? ''),\n    description: p.description ?? p.Description ?? null,\n    price: Number(p.price ?? p.Price ?? 0),\n    category_name: String(p.category_name ?? p.categoryName ?? p.CategoryName ?? ''),\n    status_name: String(p.status_name ?? p.statusName ?? p.StatusName ?? ''),\n    current_stock: Number(p.current_stock ?? p.currentStock ?? p.CurrentStock ?? 0),\n    image_url: p.image_url ?? p.imageUrl ?? p.ImageUrl ?? null\n  };\n}\n\nfunction safeParse(raw) {\n  if (raw == null) return null;\n  if (typeof raw === 'object') return raw;\n  const s = String(raw).trim();\n  if (!s) return null;\n  try { return JSON.parse(s); } catch (e) {}\n  try {\n    const m = s.match(/\\{[\\s\\S]*\\}/);\n    if (m) return JSON.parse(m[0]);\n  } catch (e2) {}\n  return null;\n}\n\nfunction toolName(step) {\n  const a = step?.action || step || {};\n  return String(\n    a.tool || a.toolName || a.name || a.tool_name\n    || step?.tool || step?.name || ''\n  ).toLowerCase();\n}\n\nfunction toolObs(step) {\n  if (step == null) return null;\n  if (typeof step.observation !== 'undefined') return step.observation;\n  if (typeof step.output !== 'undefined') return step.output;\n  if (typeof step.result !== 'undefined') return step.result;\n  return null;\n}\n\nfunction collectSteps(src) {\n  const out = [];\n  const candidates = [\n    src?.intermediateSteps,\n    src?.intermediate_steps,\n    src?.steps,\n    src?.data?.intermediateSteps\n  ];\n  for (const c of candidates) {\n    if (Array.isArray(c)) out.push(...c);\n  }\n  return out;\n}\n\nconst rawOut = String(agent.output ?? agent.text ?? agent.response ?? agent.error?.message ?? '');\nlet parsed = safeParse(rawOut);\nif (!parsed || typeof parsed !== 'object') {\n  parsed = {\n    response: (rawOut && !/max iterations/i.test(rawOut))\n      ? rawOut\n      : 'Estoy procesando tu solicitud. ¿Puedes repetir qué producto buscas?',\n    state: 'IN_PROGRESS',\n    invoice_number: null,\n    sale_origin: null,\n    products: []\n  };\n}\n\nlet products = [];\nif (Array.isArray(parsed.products)) {\n  products = parsed.products.map(mapProduct).filter(Boolean);\n}\n\nif (products.length === 0) {\n  const pref = prep.prefetched_products;\n  if (Array.isArray(pref) && pref.length) {\n    products = pref.map(mapProduct).filter(Boolean);\n  }\n}\n\nconst steps = collectSteps(agent);\nfor (const step of steps) {\n  const name = toolName(step);\n  if (!name.includes('search_product') && !name.includes('search')) continue;\n  if (name.includes('check_stock')) continue;\n  const obs = safeParse(toolObs(step));\n  if (!obs) continue;\n  const list = obs.products || (obs.data && obs.data.products) || [];\n  if (Array.isArray(list) && list.length) {\n    const mapped = list.map(mapProduct).filter(Boolean);\n    if (mapped.length) {\n      const byId = new Map(products.map(p => [p.product_id, p]));\n      for (const m of mapped) byId.set(m.product_id, m);\n      products = [...byId.values()];\n    }\n  }\n}\n\ntry {\n  const qFilter = String(prep.search_query || '').trim();\n  const _tokens = qFilter.toLowerCase().split(/\\s+/).filter(t => t.length >= 1);\n  if (_tokens.length && products.length) {\n    const _strict = products.filter(p => {\n      const name = String(p.name || '').toLowerCase();\n      return _tokens.every(t => name.includes(t));\n    });\n    if (_strict.length) products = _strict;\n  }\n} catch (e) {}\n\nlet state = String(parsed.state || 'IN_PROGRESS').toUpperCase();\nconst allowed = new Set(['IN_PROGRESS', 'SALE_COMPLETED', 'WAITING_HUMAN_AGENT', 'ERROR']);\nif (!allowed.has(state)) state = 'IN_PROGRESS';\n\nlet invoice = parsed.invoice_number ?? parsed.invoiceNumber ?? null;\nif (invoice != null) invoice = String(invoice);\nlet saleOrigin = parsed.sale_origin ?? parsed.saleOrigin ?? null;\nlet saleId = parsed.sale_id ?? parsed.saleId ?? null;\nif (saleId != null && saleId !== '') saleId = Number(saleId);\nelse saleId = null;\n\nlet _need_notify = false;\nlet _notify_body = null;\nlet response = String(parsed.response || '').trim();\n\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.sessions) staticData.sessions = {};\n\nfunction clearPending() {\n  if (staticData.sessions[sessionId]) {\n    delete staticData.sessions[sessionId].pending;\n    if (!Object.keys(staticData.sessions[sessionId]).length) {\n      delete staticData.sessions[sessionId];\n    }\n  }\n}\n\nfunction clearSession() {\n  delete staticData.sessions[sessionId];\n}\n\nfor (const step of steps) {\n  const name = toolName(step);\n  if (!name.includes('create_sale') && !name.includes('sale')) continue;\n  if (name.includes('notify')) continue;\n  const obs = safeParse(toolObs(step));\n  if (!obs) continue;\n  const ok = obs.success === true\n    || obs.ok === true\n    || !!(obs.invoiceNumber || obs.invoice_number || obs.saleId || obs.sale_id);\n  const fail = obs.success === false || obs.ok === false || obs.error || obs.message === 'error';\n  if (ok && !fail) {\n    state = 'SALE_COMPLETED';\n    invoice = String(obs.invoiceNumber || obs.invoice_number || invoice || '');\n    saleOrigin = 'CHATBOT';\n    const sid = obs.saleId ?? obs.sale_id ?? saleId;\n    saleId = sid != null && sid !== '' ? Number(sid) : null;\n    _need_notify = true;\n    _notify_body = {\n      sessionId,\n      notificationType: 'shipping_verification',\n      details: 'Venta completada vía chatbot. Factura: ' + (invoice || 'N/A'),\n      saleId: saleId\n    };\n    clearPending();\n  } else if (fail || obs.success === false) {\n    state = 'IN_PROGRESS';\n    _need_notify = true;\n    _notify_body = {\n      sessionId,\n      notificationType: 'sale_problem',\n      details: String(obs.message || obs.error || obs.details || 'Error al crear venta en chatbot'),\n      saleId: null\n    };\n    clearPending();\n    if (!response || /procesando/i.test(response)) {\n      response = 'No pude completar la compra. Un asesor revisará el caso. ¿Quieres intentar de nuevo o hablar con un humano?';\n    }\n  }\n}\n\nfor (const step of steps) {\n  const name = toolName(step);\n  if (!name.includes('escalate')) continue;\n  const obs = safeParse(toolObs(step));\n  if (!obs) continue;\n  const requiresLogin = obs.requires_login === true\n    || obs.requiresLogin === true\n    || /login|iniciar sesi[oó]n|autentic/i.test(String(obs.message || obs.error || ''));\n  const escOk = obs.success === true || obs.ok === true || obs.escalated === true;\n  if (requiresLogin && !escOk) {\n    state = 'IN_PROGRESS';\n    response = 'Para conectarte con un asesor humano necesitas iniciar sesión. Inicia sesión y vuelve a pedirlo.';\n    clearPending();\n  } else if (escOk) {\n    state = 'WAITING_HUMAN_AGENT';\n    clearSession();\n    if (!response || /procesando/i.test(response)) {\n      response = 'Te conecté con un asesor humano. En un momento te atenderán aquí mismo.';\n    }\n  } else if (obs.success === false) {\n    state = 'IN_PROGRESS';\n    if (requiresLogin) {\n      response = 'Para conectarte con un asesor humano necesitas iniciar sesión. Inicia sesión y vuelve a pedirlo.';\n    }\n    clearPending();\n  }\n}\n\nconst isConfirm = !!prep.is_confirm;\nif (state === 'IN_PROGRESS' && products.length === 1 && !isConfirm) {\n  const p = products[0];\n  if (!staticData.sessions[sessionId]) staticData.sessions[sessionId] = {};\n  staticData.sessions[sessionId].pending = {\n    product_id: p.product_id,\n    quantity: 1,\n    name: p.name\n  };\n}\n\nconst fallbackLike = !response\n  || /procesando tu solicitud|repetir qu[eé] producto|max iterations|sin respuesta/i.test(response);\n\nif (/problema al buscar|error al buscar|no devolvi[oó]|max iterations/i.test(response) && products.length > 0) {\n  response = 'Encontré estas opciones para ti. Elige en las tarjetas de abajo o dime cuál te interesa.';\n}\n\nif (products.length > 0 && fallbackLike) {\n  const q = String(prep.search_query || '').trim();\n  response = q\n    ? (products.length === 1\n        ? ('Encontré 1 opción para \"' + q + '\". Elige en las tarjetas o dime cuál te interesa.')\n        : ('Encontré ' + products.length + ' opción(es) para \"' + q + '\". Elige en las tarjetas o dime cuál te interesa.'))\n    : 'Encontré estas opciones para ti. Elige en las tarjetas de abajo o dime cuál te interesa.';\n}\n\nresponse = response.replace(/!\\[[^\\]]*\\]\\([^)]*\\)/gi, '');\nresponse = response.replace(/https?:\\/\\/\\S+\\.(?:png|jpe?g|gif|webp|svg)(\\?\\S*)?/gi, '');\nresponse = response.replace(/https?:\\/\\/\\S*cloudinary\\S*/gi, '');\nresponse = response.replace(/https?:\\/\\/\\S*\\/image\\S*/gi, '');\nresponse = response.trim();\n\nconst looksLikeCatalog = /\\*\\*Precio\\*\\*|Stock disponible|\\d+\\.\\s*\\*\\*/i.test(response);\nif (products.length > 0 && (looksLikeCatalog || response.length > 420)) {\n  response = 'Encontré estas opciones para ti. Elige en las tarjetas de abajo o dime cuál te interesa.';\n}\n\nif (!response) {\n  response = products.length > 0\n    ? 'Encontré estas opciones para ti. Elige en las tarjetas de abajo o dime cuál te interesa.'\n    : 'Estoy aquí para ayudarte. ¿Qué producto buscas?';\n}\n\nif (state === 'SALE_COMPLETED' && !saleOrigin) saleOrigin = 'CHATBOT';\n\n// Guaranteed HTTP notify if Agent skipped notify_advisor after sale success/fail\nlet agentNotified = false;\nfor (const step of steps) {\n  if (!toolName(step).includes('notify')) continue;\n  const obs = safeParse(toolObs(step));\n  if (obs && (obs.success === true || obs.ok === true || obs.notified === true)) {\n    agentNotified = true;\n  } else if (obs == null && toolObs(step) != null) {\n    // Non-JSON observation but tool ran — treat as attempted notify\n    agentNotified = true;\n  }\n}\n\nlet saleSucceeded = false;\nlet saleFailed = false;\nfor (const step of steps) {\n  const name = toolName(step);\n  if (name.includes('notify')) continue;\n  if (!name.includes('create_sale') && !name.includes('sale')) continue;\n  const obs = safeParse(toolObs(step));\n  if (!obs) continue;\n  const ok = obs.success === true\n    || obs.ok === true\n    || !!(obs.invoiceNumber || obs.invoice_number || obs.saleId || obs.sale_id);\n  if (ok && obs.success !== false) saleSucceeded = true;\n  if (obs.success === false || obs.ok === false) saleFailed = true;\n}\n\nif (agentNotified) {\n  _need_notify = false;\n  _notify_body = null;\n} else if (saleSucceeded || state === 'SALE_COMPLETED') {\n  _need_notify = true;\n  _notify_body = {\n    sessionId,\n    notificationType: 'shipping_verification',\n    details: 'Venta completada vía chatbot. Factura: ' + (invoice || 'N/A'),\n    saleId: saleId\n  };\n} else if (saleFailed) {\n  _need_notify = true;\n  _notify_body = {\n    sessionId,\n    notificationType: 'sale_problem',\n    details: 'Error al crear venta en chatbot',\n    saleId: null\n  };\n}\n\nreturn [{\n  json: {\n    response,\n    state,\n    invoice_number: invoice,\n    sale_origin: saleOrigin,\n    products,\n    _need_notify: !!_need_notify,\n    _notify_body: _need_notify ? _notify_body : null\n  }\n}];"
+      },
+      "id": "code-enrich",
+      "name": "Enrich From Tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-bool",
+              "leftValue": "={{ $json._need_notify }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-need-notify",
+      "name": "IF need_notify",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5299/api/chat/notify-advisor?raw=1",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json._notify_body) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Raw-Response",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "http-notify",
+      "name": "HTTP Notify Advisor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let j = {};\ntry { j = $('Enrich From Tools').first().json || {}; } catch (e) { j = $json || {}; }\nreturn [{\n  json: {\n    response: j.response,\n    state: j.state,\n    invoice_number: j.invoice_number ?? null,\n    sale_origin: j.sale_origin ?? null,\n    products: Array.isArray(j.products) ? j.products : []\n  }\n}];"
+      },
+      "id": "code-finalize",
+      "name": "Finalize Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "resp-1",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2660,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Extract Search Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Search Query": {
+      "main": [
+        [
+          {
+            "node": "IF should_search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF should_search": {
+      "main": [
+        [
+          {
+            "node": "HTTP Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Empty Search Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Search": {
+      "main": [
+        [
+          {
+            "node": "Prepare Agent Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Empty Search Results": {
+      "main": [
+        [
+          {
+            "node": "Prepare Agent Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Agent Context": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Enrich From Tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrich From Tools": {
+      "main": [
+        [
+          {
+            "node": "IF need_notify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF need_notify": {
+      "main": [
+        [
+          {
+            "node": "HTTP Notify Advisor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Finalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Notify Advisor": {
+      "main": [
+        [
+          {
+            "node": "Finalize Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "search_product": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_stock": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "create_sale": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_invoice": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "escalate_to_human": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "notify_advisor": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "smartinventory-chatbot-v7",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "smartinventory-local"
+  },
+  "tags": [
+    {
+      "name": "smartinventory"
+    },
+    {
+      "name": "chatbot"
+    },
+    {
+      "name": "ai-agent"
+    }
+  ]
+}
